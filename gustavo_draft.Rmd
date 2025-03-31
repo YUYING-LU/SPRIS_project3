@@ -1,0 +1,410 @@
+---
+title: "SPRIS Proj 3 draft"
+author: "Gustavo Garcia-Franceschini"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gtsummary)
+library(lme4)
+```
+
+# Loading data
+
+```{r}
+baseline = read_csv("baseline.csv")
+endpoints = read_csv("endpoints.csv")
+```
+
+# Creating the 'sequence' variable
+
+```{r}
+baseline = baseline %>%
+  mutate(sequence = case_when(
+    
+    period1 == "Pill A" & period2 == "Gel B" ~ 0,
+    
+    period1 == "Gel B" & period2 == "Pill A" ~ 0,
+    
+    period1 == "Pill A" & period2 == "Gel C" ~ 1,
+    
+    period1 == "Gel C" & period2 == "Pill A" ~ 1,
+    
+    period1 == "Gel C" & period2 == "Gel B" ~ 2,
+    
+    period1 == "Gel B" & period2 == "Gel C" ~ 2,
+    
+  
+  ))
+```
+
+
+# Table 1
+
+```{r}
+baseline %>%
+  mutate(gender = if_else(gender == 0, "Male", "Female")) %>%
+  select(c(age, race, gender, sequence, bviral0, sviral0,
+           period1, period2, period3)) %>%  
+  tbl_summary(
+    by = sequence,
+    statistic = list(
+            all_continuous() ~ "{mean} ({sd})"
+        )) %>%
+  add_p() %>%
+  modify_caption("**Patient Characteristics**") 
+```
+
+# Tidying data
+
+```{r}
+base_df = baseline |> 
+  mutate(
+    ptid = factor(ptid),
+    seq = paste0(
+      substr(period1, nchar(period1), nchar(period1)),
+      substr(period2, nchar(period2), nchar(period2)),
+      substr(period3, nchar(period3), nchar(period3))),
+    seq2 = case_when(
+      period3=="Gel C" ~ 0,
+      period3=="Gel B" ~ 1,
+      period3=="Pill A" ~ 2),
+    b1 = bviral1-bviral0,
+    b2 = bviral3-bviral2,
+    b3 = bviral5-bviral4,
+    b4 = bviral6,
+    s1 = sviral1-sviral0,
+    s2 = sviral3-sviral2,
+    s3 = sviral5-sviral4,
+    s4 = sviral6) |> 
+    select(ptid, seq, seq2, age, race, gender, b1, b2, b3, b4,
+           s1, s2, s3, s4) |> 
+    pivot_longer(b1:s4,
+                 names_to = "index",
+                 values_to = "viral") |> 
+    mutate(period=substr(index,2,2),
+           index = ifelse(substr(index,1,1)=="b","bviral","sviral")) |> 
+  pivot_wider(names_from = index,
+              values_from = viral)
+ 
+endpoints 
+
+end_df = 
+  endpoints |> mutate(
+    ptid = factor(ptid),
+    seq = paste0(
+      substr(period1, nchar(period1), nchar(period1)),
+      substr(period2, nchar(period2), nchar(period2)),
+      substr(period3, nchar(period3), nchar(period3))),
+    seq2 = case_when(
+      period3=="Gel C" ~ 0,
+      period3=="Gel B" ~ 1,
+      period3=="Pill A" ~ 2)) |> 
+  pivot_longer(AE_pillA_week1:Adhere_gelC_week4,
+               names_to = "index",
+               values_to = "value") |> 
+  select(ptid, seq, seq2, index, value) |> 
+  mutate(week = substr(index,nchar(index),nchar(index)),
+         treatment = str_sub(index, -7, -7),
+         period =str_locate(seq, str_sub(index, -7, -7))[, "start"],
+         index = str_sub(index,1,2)) |> 
+  pivot_wider(names_from = index,
+              values_from = value)
+
+df <- 
+  merge(end_df, base_df, by = c("ptid","seq","seq2","period")) |> 
+  mutate(
+    ptid= factor(ptid),
+    period = factor(period),
+    week = factor(week),
+    seq  = factor(seq),
+    seq2 = factor(seq2)
+  )
+
+df
+```
+
+```{r}
+pri_df <- df %>%
+  group_by(ptid, period, treatment) %>%
+  summarise(
+    age = first(age),
+    race = first(race),
+    gender = first(gender),
+    seq = first(seq),
+    seq2 = first(seq2),
+    AE = ifelse(sum(AE)>=1,1,0),
+    AD = sum(Ad),
+    bviral = first(bviral),
+    sviral = first(sviral)
+  )
+pri_df 
+
+```
+
+# Have to check for remaining effect
+
+Possible lme model:outcome = demographics + random intercept + period effect + treatment effect + sequence2(prior effect)
+
+## Wilcoxon rank test
+
+```{r}
+cross_df = pri_df %>%
+  group_by(ptid) %>%
+  summarize(
+    seq2 = first(seq2),
+    AD = sum(AD),
+    AE = sum(AE), #will this work for binary?
+    bviral = sum(bviral), #careful abt these interpretations: the sum of changes
+    sviral = sum(sviral)
+  )
+```
+
+### For Adverse effects
+
+#### Seq 0 vs Seq 1
+
+```{r}
+cross_df %>%
+  select(seq2, AD) %>%
+  filter(seq2 != 2) %>%
+  wilcox.test(AD ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 0 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, AD) %>%
+  filter(seq2 != 1) %>%
+  wilcox.test(AD ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 1 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, AD) %>%
+  filter(seq2 != 0) %>%
+  wilcox.test(AD ~ seq2, data = .,
+        exact = FALSE)
+```
+
+Result: No test rejected the nUll Hypothesis, despite Bonferroni correction
+
+### For safety
+
+#### Seq 0 vs Seq 1
+
+```{r}
+cross_df %>%
+  select(seq2, AE) %>%
+  filter(seq2 != 2) %>%
+  wilcox.test(AE ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 0 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, AE) %>%
+  filter(seq2 != 1) %>%
+  wilcox.test(AE ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 1 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, AE) %>%
+  filter(seq2 != 0) %>%
+  wilcox.test(AE ~ seq2, data = .,
+        exact = FALSE)
+```
+Result: No test rejected the Null Hypothesis, despite Bonferroni correction.
+
+### For blood viral loads
+
+#### Seq 0 vs Seq 1
+
+```{r}
+cross_df %>%
+  select(seq2, bviral) %>%
+  filter(seq2 != 2) %>%
+  wilcox.test(bviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 0 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, bviral) %>%
+  filter(seq2 != 1) %>%
+  wilcox.test(bviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 1 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, bviral) %>%
+  filter(seq2 != 0) %>%
+  wilcox.test(bviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+Result: No test rejected the Null Hypothesis, despite Bonferroni correction
+
+### For skin viral loads
+
+#### Seq 0 vs Seq 1
+
+```{r}
+cross_df %>%
+  select(seq2, sviral) %>%
+  filter(seq2 != 2) %>%
+  wilcox.test(sviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 0 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, sviral) %>%
+  filter(seq2 != 1) %>%
+  wilcox.test(sviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+#### Seq 1 vs Seq 2
+
+```{r}
+cross_df %>%
+  select(seq2, sviral) %>%
+  filter(seq2 != 0) %>%
+  wilcox.test(sviral ~ seq2, data = .,
+        exact = FALSE)
+```
+
+Result: No test rejected the Null Hypothesis, despite Bonferroni correction
+
+# Primary Objectives
+
+1) whether the medications are safe for patients,
+
+```{r}
+model = lmer(AE ~ period + treatment + age + race + gender + 
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)  # ML estimation
+
+model = glmer(AE ~ period + treatment + age + race + gender + 
+       (1 | ptid),
+family = 'binomial'(link = "logit"), data = pri_df, nAGQ = 0)
+
+summary(model)
+```
+
+
+2) whether patients could easily adhere to medication schedules so that long term use is feasible.
+
+```{r}
+model = lmer(AD ~ period + treatment + age + race + gender + 
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)  # ML estimation
+
+summary(model)
+```
+
+We possibly want to know if there is a relationship between safeness/adherence and time (so we might need time to be numeric).
+
+# Secondary Objectives
+
+1) Check how treatments compare in terms of viral loads in blood and skin tissues.
+
+Blood:
+
+```{r}
+model = lmer(bviral ~ period + treatment + age + race + gender + 
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)
+
+summary(model)
+```
+
+Skin:
+
+```{r}
+model = lmer(sviral ~ period + treatment + age + race + gender + 
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)
+
+summary(model)
+```
+
+
+2) Assess the correlation of PK with adherence measures and the occurrence of adverse events.
+
+```{r}
+model = glmer(AE ~ period + age + race + gender + bviral + sviral + treatment +
+       (1 | ptid),
+family = 'binomial'(link = "logit"), data = pri_df, nAGQ = 0)
+
+summary(model)
+```
+
+
+```{r}
+model = lmer(AD ~ period + treatment + age + race + gender + bviral + sviral +
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)  # ML estimation
+
+summary(model)
+```
+
+3) identify demographic factors associated with product adherence and whether they differ by treatment (both product and regimen)
+
+```{r}
+pri_df = pri_df %>%
+  mutate(gel = if_else(treatment == "B" | treatment == "C", 1, 0),
+         once_day = if_else(treatment == "B", 0, 1))
+
+model = lmer(AD ~ period + age + race + gender + bviral + sviral + 
+               gel + once_day + gel:once_day +
+       (1 | ptid), 
+     data = pri_df, 
+     REML = FALSE)  # ML estimation
+
+summary(model)
+```
+
+Will not accept the interaction term LOL
+
+Note that the viral loads are available only at beginning and end of study, so we can only compare to adherence by period (and not weeks). Meaning time would be categorical here.
+
+Takeaways/Questions:
+
+1) Had to fit glmer instead of lmer for AD. Also, does the Wilcoxon rank test even work for binary? Would the McNemar test work/be appropriate?
+
+2) We'll have to be careful with the interpretation of bviral and sviral, since they are differences.
+
+3) Found no remaining effects, which is great but suspicious.
+
+4) Treatment effect was significant for everything but adherence. In the case of viral loads, the coefficients are positive, meaning the difference is greater for treatments B and C, compared to A, meaning A is best (provides the lowest difference).
+
+5) Didn't check correlation per se, but loads seem to be significantly associated with both safety and adherence, even when accounting for treatment.
+
+6) Found that age gel and pills were all significantly associated with adherence. But the lmer automatically dropped my interaction term.

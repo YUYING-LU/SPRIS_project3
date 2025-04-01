@@ -148,8 +148,6 @@ pri_df
 
 Possible lme model:outcome = demographics + random intercept + period effect + treatment effect + sequence2(prior effect)
 
-## Wilcoxon rank test
-
 ```{r}
 cross_df = pri_df %>%
   group_by(ptid) %>%
@@ -159,8 +157,41 @@ cross_df = pri_df %>%
     AE = sum(AE), #will this work for binary?
     bviral = sum(bviral), #careful abt these interpretations: the sum of changes
     sviral = sum(sviral)
-  )
+  ) %>%
+  mutate(AE = if_else(AE >= 1, 1, 0))
 ```
+
+## Chi-Square test for Homogeneity
+
+```{r}
+tab = cross_df %>%
+  select(seq2, AE) %>%
+  table()
+
+a = tab[c(1,2), ]
+
+b = tab[c(1,3), ]
+
+c = tab[c(2,3), ]
+
+
+test_1_2 <- chisq.test(a)
+test_1_3 <- chisq.test(b)
+test_2_3 <- chisq.test(c)
+
+# Collect the p-values
+p_values <- c(test_1_2$p.value, test_1_3$p.value, test_2_3$p.value)
+
+# Apply the Bonferroni correction
+bonferroni_p_values <- p.adjust(p_values, method = "bonferroni")
+
+print("Bonferroni-adjusted p-values:")
+print(bonferroni_p_values)
+```
+
+
+
+## Wilcoxon rank test
 
 ### For Adverse effects
 
@@ -397,7 +428,7 @@ Note that the viral loads are available only at beginning and end of study, so w
 
 Takeaways/Questions:
 
-1) Had to fit glmer instead of lmer for AD. Also, does the Wilcoxon rank test even work for binary? Would the McNemar test work/be appropriate?
+1) Had to fit glmer instead of lmer for AE. Also, does the Wilcoxon rank test even work for binary? Would the McNemar test work/be appropriate?
 
 2) We'll have to be careful with the interpretation of bviral and sviral, since they are differences.
 
@@ -407,4 +438,8 @@ Takeaways/Questions:
 
 5) Didn't check correlation per se, but loads seem to be significantly associated with both safety and adherence, even when accounting for treatment.
 
-6) Found that age gel and pills were all significantly associated with adherence. But the lmer automatically dropped my interaction term.
+6) Found that age, gel and pills were all significantly associated with adherence. But the lmer automatically dropped my interaction term.
+
+7) Penalized logistic regression?
+
+8) Correlations?

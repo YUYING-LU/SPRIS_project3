@@ -176,8 +176,8 @@ seq2_df =
     seq2 = first(seq2),
     AE_sum = sum(AE),    # for indicator, you can use AE_sum = ifelse(sum(AE)>=1,1,0)
     Ad_sum = sum(Ad),
-    bv_sum = sum(bviral),
-    sv_sum = sum(sviral),
+    bv_sum = sum(dif_bviral),
+    sv_sum = sum(dif_sviral),
     base_bv_sum = sum(base_bviral),
     base_sv_sum = sum(base_sviral),
     .groups = "drop"

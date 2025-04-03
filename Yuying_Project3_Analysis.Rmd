@@ -353,15 +353,15 @@ Fit binomial B(7,p) for `7-Ad`
 
 
 Ad_week = df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, family = binomial, data = _)
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, family = binomial, data = _)
 
 
 ### include week as a categorical variable
 Ad_week_cat = df |>
-  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, family = binomial, data = _)
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, family = binomial, data = _)
 
 ### exclude week
-Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period, family = binomial, data = _)
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period+ base_bviral+ base_sviral, family = binomial, data = _)
 
 print("Include Week")
 summary(Ad_week)
@@ -380,14 +380,14 @@ Fit model with the assumption that `7-Ad` follows zero-inflation binomial
 
 ```{r}
 Ad_week = df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, ziformula = ~1, family = binomial, data = _)
 
 ### include week as a categorical variable
 Ad_week_cat = df |>
-  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week,  ziformula = ~1, family = binomial, data = _)
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral,  ziformula = ~1, family = binomial, data = _)
 
 ### exclude week
-Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period,  ziformula = ~1, family = binomial, data = _)
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period+ base_bviral+ base_sviral,  ziformula = ~1, family = binomial, data = _)
 
 print("Include Week")
 summary(Ad_week)
@@ -402,8 +402,8 @@ The binomial model with zero-inflation for `7-Ad` is better than the binomial fo
 
 ```{r}
 Ad_week = df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
-
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week + base_bviral+ base_sviral, ziformula = ~1, family = binomial, data = _)
+summary(Ad_week)
 ```
 
 

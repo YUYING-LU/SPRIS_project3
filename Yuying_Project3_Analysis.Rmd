@@ -301,23 +301,30 @@ Carryover is not significant for all the model
 
 # Primary Objective (Focus on AE and Ad)
 
+Fit binomial LMM bor AE
+
 ```{r}
 ### I use data 'df', which records the AE/Ad value at each week in different periods
 
 ##### For AE #####
+### Here I use the indicator of number of AE>=1 as AE
 
 ### include week as a continuous variable
-AE_week = df |> mutate(week = as.numeric(week)) |> 
+
+AE_week = df |> mutate(week = as.numeric(week),
+                       AE = ifelse(AE>=1,1,0)) |> 
                 glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                              data = _, family = nbinom2)
+                              data = _, family = binomial)
 
 ### include week as a categorical variable
-AE_week_cat = glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                  data = df, family = nbinom2)
+AE_week_cat = df |> mutate(AE = ifelse(AE>=1,1,0)) |> 
+  glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                  data = _, family = binomial)
 
 ### exclude week
-AE_noweek = glmmTMB(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
-                  data = df, family = nbinom2)
+AE_noweek = df |> mutate(AE = ifelse(AE>=1,1,0)) |> 
+  glmmTMB(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
+                  data = _, family = binomial)
 
 print("Include Week as Continuous")
 summary(AE_week)
@@ -331,68 +338,30 @@ summary(AE_noweek)
 
 # However, treat week as continuous variable gives better AIC
 
-
 ```
 
 
-
-
-```{r}
-### include week as a continuous variable
-AE_week = df |> mutate(week = as.numeric(week)) |> 
-                glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                              data = _, family = poisson)
-
-### include week as a categorical variable
-AE_week_cat = glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                  data = df, family = poisson)
-
-### exclude week
-AE_noweek = glmmTMB(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
-                  data = df, family = poisson)
-
-print("Include Week as Continuous")
-summary(AE_week)
-print("Include Week as Categorical")
-summary(AE_week_cat)
-print("Exclude Week")
-summary(AE_noweek)
-
-
-### same for set family = poisson
-
-# Week4 is significant, we'd better consider including week as a variable
-
-# However, treat week as continuous variable gives better AIC
-
-
-```
-
-
+Fit binomial B(7,p) for `7-Ad`
 
 ```{r}
 ##### For Ad #####
 
 ### include week as a continuous variable
-Ad_week = df |> mutate(week = as.numeric(week)) |> 
-                glmmTMB(Ad ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                              data = _, family = nbinom2)
-summary(Ad_week)
+
 # when set family = nbinom here, the model doesn't converge with AIC = NA
 # therefore I choose family = poisson
 
 
 Ad_week = df |> mutate(week = as.numeric(week)) |> 
-                glmmTMB(Ad ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                              data = _, family = poisson) 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, family = binomial, data = _)
+
 
 ### include week as a categorical variable
-Ad_week_cat = glmmTMB(Ad ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
-                              data = df, family = poisson)
+Ad_week_cat = df |>
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, family = binomial, data = _)
 
 ### exclude week
-Ad_noweek = glmmTMB(Ad ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
-                  data = df, family = poisson)
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period, family = binomial, data = _)
 
 print("Include Week")
 summary(Ad_week)
@@ -406,8 +375,39 @@ summary(Ad_noweek)
 ```
 
 
+Fit model with the assumption that `7-Ad` follows zero-inflation binomial
 
-### For AE, Penalized Logistic
+
+```{r}
+Ad_week = df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
+
+### include week as a categorical variable
+Ad_week_cat = df |>
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week,  ziformula = ~1, family = binomial, data = _)
+
+### exclude week
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period,  ziformula = ~1, family = binomial, data = _)
+
+print("Include Week")
+summary(Ad_week)
+print("Include Week categorical")
+summary(Ad_week_cat)
+print("Exclude Week")
+summary(Ad_noweek)
+
+```
+
+The binomial model with zero-inflation for `7-Ad` is better than the binomial for `7-Ad` without zero inflation.  So we choose to use the following model with week being treated as a continuous variable.
+
+```{r}
+Ad_week = df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
+
+```
+
+
+### For AE, Penalized Logistic (Not good for interpretation)
 
 ```{r}
 library(glmnet)
@@ -533,14 +533,15 @@ dem_df = df |>
 
 ```{r}
 Ad_mod =  dem_df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(Ad ~ product + regimen + base_bviral + week +period + (1|ptid), data =_, family = poisson)
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
+
 summary(Ad_mod)
 ```
 
 ```{r}
 # adding demographic variables 
 Ad_mod =  dem_df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(Ad ~ product + regimen + age + gender + race + base_bviral + week +period + (1|ptid), data =_, family = poisson)
+  glmmTMB(cbind(7-Ad,Ad) ~ product + regimen + age + gender + race + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
 summary(Ad_mod)
 ```
 
@@ -549,20 +550,19 @@ Only age shows significant association with Adherence
 #### Interaction (age with product) and (age with regimen)
 
 ```{r}
-bv_mod_ap = dem_df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(Ad ~ age*product + regimen +  base_bviral + week + period + (1|ptid), data =_, family = poisson)
+bv_mod_ap =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~ age*product + regimen + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
 
-bv_mod_ar = dem_df |> mutate(week = as.numeric(week)) |> 
-  glmmTMB(Ad ~ product + age*regimen +  base_bviral + week + period + (1|ptid), data =_, family = poisson)
-
+bv_mod_ar =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~ product + age*regimen + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
 
 summary(bv_mod_ap)
 summary(bv_mod_ar)
 
 ```
 
-- the association between age and adherence has significant difference varied by product
-- the association between age and adherence has significant difference varied by regimen
+- the association between age and adherence has no significant difference varied by product
+- the association between age and adherence has no significant difference varied by regimen
 
 
 

@@ -1,5 +1,5 @@
 ---
-title: "SPRIS Proj 3 draft"
+title: "SPRIS Proj 3 Analysis"
 author: "Gustavo Garcia-Franceschini"
 date: "`r Sys.Date()`"
 output: html_document
@@ -88,8 +88,6 @@ base_df = baseline |>
            index = ifelse(substr(index,1,1)=="b","bviral","sviral")) |> 
   pivot_wider(names_from = index,
               values_from = viral)
- 
-endpoints 
 
 end_df = 
   endpoints |> mutate(
@@ -123,7 +121,6 @@ df <-
     seq2 = factor(seq2)
   )
 
-df
 ```
 
 ```{r}
@@ -135,18 +132,14 @@ pri_df <- df %>%
     gender = first(gender),
     seq = first(seq),
     seq2 = first(seq2),
-    AE = ifelse(sum(AE)>=1,1,0),
+    AE = sum(AE),
     AD = sum(Ad),
     bviral = first(bviral),
     sviral = first(sviral)
   )
-pri_df 
-
 ```
 
 # Have to check for remaining effect
-
-Possible lme model:outcome = demographics + random intercept + period effect + treatment effect + sequence2(prior effect)
 
 ```{r}
 cross_df = pri_df %>%
@@ -154,17 +147,19 @@ cross_df = pri_df %>%
   summarize(
     seq2 = first(seq2),
     AD = sum(AD),
-    AE = sum(AE), #will this work for binary?
+    AE = sum(AE),
     bviral = sum(bviral), #careful abt these interpretations: the sum of changes
     sviral = sum(sviral)
-  ) %>%
-  mutate(AE = if_else(AE >= 1, 1, 0))
+  )
 ```
 
 ## Chi-Square test for Homogeneity
 
+### For Adverse events
+
 ```{r}
 tab = cross_df %>%
+  mutate(AE = if_else(AE == 0 , 0, 1)) %>%
   select(seq2, AE) %>%
   table()
 
@@ -195,8 +190,6 @@ print(bonferroni_p_values)
 
 ### For Adherence
 
-#### Seq 0 vs Seq 1
-
 ```{r}
 a= cross_df %>%
   select(seq2, AD) %>%
@@ -205,11 +198,7 @@ a= cross_df %>%
         exact = FALSE)
 
 a = a$p.val
-```
 
-#### Seq 0 vs Seq 2
-
-```{r}
 b= cross_df %>%
   select(seq2, AD) %>%
   filter(seq2 != 1) %>%
@@ -217,11 +206,7 @@ b= cross_df %>%
         exact = FALSE)
 
 b = b$p.val
-```
 
-#### Seq 1 vs Seq 2
-
-```{r}
 c = cross_df %>%
   select(seq2, AD) %>%
   filter(seq2 != 0) %>%
@@ -229,16 +214,13 @@ c = cross_df %>%
         exact = FALSE)
 
 c = c$p.val
-```
 
-```{r}
 p.adjust(c(a, b, c), method = "bonferroni")
 ```
 
-
 Result: No test rejected the nUll Hypothesis, despite Bonferroni correction
 
-### For adverse events
+### For Adverse Events
 
 #### Seq 0 vs Seq 1
 
@@ -250,11 +232,7 @@ a= cross_df %>%
         exact = FALSE)
 
 a = a$p.val
-```
 
-#### Seq 0 vs Seq 2
-
-```{r}
 b = cross_df %>%
   select(seq2, AE) %>%
   filter(seq2 != 1) %>%
@@ -262,11 +240,7 @@ b = cross_df %>%
         exact = FALSE)
 
 b = b$p.val
-```
 
-#### Seq 1 vs Seq 2
-
-```{r}
 c = cross_df %>%
   select(seq2, AE) %>%
   filter(seq2 != 0) %>%
@@ -274,16 +248,13 @@ c = cross_df %>%
         exact = FALSE)
 
 c = c$p.val
-```
-Result: No test rejected the Null Hypothesis, despite Bonferroni correction.
 
-```{r}
 p.adjust(c(a, b, c), method = "bonferroni")
 ```
 
-### For blood viral loads
+Result: No test rejected the Null Hypothesis, despite Bonferroni correction.
 
-#### Seq 0 vs Seq 1
+### For blood viral loads
 
 ```{r}
 a = cross_df %>%
@@ -293,11 +264,7 @@ a = cross_df %>%
         exact = FALSE)
 
 a = a$p.val
-```
 
-#### Seq 0 vs Seq 2
-
-```{r}
 b = cross_df %>%
   select(seq2, bviral) %>%
   filter(seq2 != 1) %>%
@@ -305,11 +272,7 @@ b = cross_df %>%
         exact = FALSE)
 
 b = b$p.val
-```
 
-#### Seq 1 vs Seq 2
-
-```{r}
 c = cross_df %>%
   select(seq2, bviral) %>%
   filter(seq2 != 0) %>%
@@ -317,17 +280,13 @@ c = cross_df %>%
         exact = FALSE)
 
 c = c$p.val 
+
+p.adjust(c(a, b, c), method = "bonferroni")
 ```
 
 Result: No test rejected the Null Hypothesis, despite Bonferroni correction
 
-```{r}
-p.adjust(c(a, b, c), method = "bonferroni")
-```
-
 ### For skin viral loads
-
-#### Seq 0 vs Seq 1
 
 ```{r}
 a = cross_df %>%
@@ -337,11 +296,7 @@ a = cross_df %>%
         exact = FALSE)
 
 a = a$p.val
-```
 
-#### Seq 0 vs Seq 2
-
-```{r}
 b = cross_df %>%
   select(seq2, sviral) %>%
   filter(seq2 != 1) %>%
@@ -349,11 +304,7 @@ b = cross_df %>%
         exact = FALSE)
 
 b = b$p.val
-```
 
-#### Seq 1 vs Seq 2
-
-```{r}
 c = cross_df %>%
   select(seq2, sviral) %>%
   filter(seq2 != 0) %>%
@@ -361,13 +312,11 @@ c = cross_df %>%
         exact = FALSE)
 
 c = c$p.val
+
+p.adjust(c(a, b, c), method = "bonferroni")
 ```
 
 Result: No test rejected the Null Hypothesis, despite Bonferroni correction
-
-```{r}
-p.adjust(c(a, b, c), method = "bonferroni")
-```
 
 # Primary Objectives
 
@@ -461,25 +410,3 @@ model = lmer(AD ~ age + gel + once_day  + age:gel + age:once_day +
 
 summary(model)
 ```
-
-Will not accept the interaction term LOL
-
-Note that the viral loads are available only at beginning and end of study, so we can only compare to adherence by period (and not weeks). Meaning time would be categorical here.
-
-Takeaways/Questions:
-
-1) Had to fit glmer instead of lmer for AE. Also, does the Wilcoxon rank test even work for binary? Would the McNemar test work/be appropriate?
-
-2) We'll have to be careful with the interpretation of bviral and sviral, since they are differences.
-
-3) Found no remaining effects, which is great but suspicious.
-
-4) Treatment effect was significant for everything but adherence. In the case of viral loads, the coefficients are positive, meaning the difference is greater for treatments B and C, compared to A, meaning A is best (provides the lowest difference).
-
-5) Didn't check correlation per se, but loads seem to be significantly associated with both safety and adherence, even when accounting for treatment.
-
-6) Found that age, gel and pills were all significantly associated with adherence. But the lmer automatically dropped my interaction term.
-
-7) Penalized logistic regression?
-
-8) Correlations?

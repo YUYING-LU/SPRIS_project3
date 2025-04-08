@@ -1,0 +1,568 @@
+---
+title: "Project3 Analysis"
+author: "Yuying Lu"
+date: "2025-03-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(readxl)
+library(ggplot2)
+library(emmeans)
+```
+
+```{r}
+baseline <- read.csv("baseline.csv")
+endpoints <- read.csv("endpoints.csv")
+
+base_df = baseline |> 
+  mutate(
+    ptid = factor(ptid),
+    seq = paste0(
+      substr(period1, nchar(period1), nchar(period1)),
+      substr(period2, nchar(period2), nchar(period2)),
+      substr(period3, nchar(period3), nchar(period3))),
+    seq2 = case_when(
+      period3=="Gel C" ~ 0,
+      period3=="Gel B" ~ 1,
+      period3=="Pill A" ~ 2),
+    b1 = bviral1-bviral0,
+    b2 = bviral3-bviral2,
+    b3 = bviral5-bviral4,
+    follow_b = bviral6-bviral5, 
+    s1 = sviral1-sviral0,
+    s2 = sviral3-sviral2,
+    s3 = sviral5-sviral4,
+    follow_s = sviral6 - sviral5,
+    ini_b1 = bviral0,
+    ini_b2 = bviral2,
+    ini_b3 = bviral4,
+    ini_s1 = sviral0,
+    ini_s2 = sviral2,
+    ini_s3 = sviral4,
+    end_b1 = bviral1,
+    end_b2 = bviral3,
+    end_b3 = bviral5,
+    end_s1 = sviral1,
+    end_s2 = sviral3,
+    end_s3 = sviral5) |> 
+    select(ptid, seq, seq2, age, race, gender, b1, b2, b3, s1, s2, s3, 
+             ini_b1, ini_b2, ini_b3, ini_s1, ini_s2, ini_s3,
+           end_b1, end_b2, end_b3, end_s1, end_s2, end_s3, follow_b, follow_s) |> 
+    pivot_longer(b1:end_s3,
+                 names_to = "index",
+                 values_to = "viral") |> 
+    mutate(period=substr(index,nchar(index),nchar(index)),
+           index = case_when(
+             substr(index,1,1)=="b" ~ "dif_bviral",
+             substr(index,1,1)=="s" ~ "dif_sviral",
+             substr(index,1,5)=="ini_b" ~ "base_bviral",
+             substr(index,1,5)=="ini_s" ~ "base_sviral",
+             substr(index,1,5)=="end_b" ~ "end_bviral",
+             substr(index,1,5)=="end_s" ~ "end_sviral"
+           )) |> 
+    pivot_wider(names_from = index,
+              values_from = viral) 
+end_df = 
+  endpoints |> mutate(
+    ptid = factor(ptid),
+    seq = paste0(
+      substr(period1, nchar(period1), nchar(period1)),
+      substr(period2, nchar(period2), nchar(period2)),
+      substr(period3, nchar(period3), nchar(period3))),
+    seq2 = case_when(
+      period3=="Gel C" ~ 0,
+      period3=="Gel B" ~ 1,
+      period3=="Pill A" ~ 2)) |> 
+  pivot_longer(AE_pillA_week1:Adhere_gelC_week4,
+               names_to = "index",
+               values_to = "value") |> 
+  select(ptid, seq, seq2, index, value) |> 
+  mutate(week = substr(index,nchar(index),nchar(index)),
+         treatment = str_sub(index, -7, -7),
+         period =str_locate(seq, str_sub(index, -7, -7))[, "start"],
+         index = str_sub(index,1,2)) |> 
+  pivot_wider(names_from = index,
+              values_from = value) |> 
+  mutate(carry_over = 
+           case_when(
+             period == "1" ~ NA,
+             period == "2" ~ substr(seq,1,1),
+             period == "3" ~ substr(seq,2,2)
+  ))
+
+df <- 
+  merge(end_df, base_df, by = c("ptid","seq","seq2","period")) |> 
+  mutate(
+    ptid= factor(ptid),
+    period = factor(period),
+    week = factor(week),
+    seq  = factor(seq),
+    seq2 = factor(seq2)
+  )
+
+df
+```
+
+
+- 'end_...' -- viral measured at the end of period
+
+- 'base_...' -- viral measured at the beginning of period
+
+- 'dif_...' = 'end_...' - 'base_...' for each period,   ... could be 'bviral'/'sviral'
+
+include the 'base_...' in the covariates
+
+the response could be 'end_...' or 'dif_...'
+
+
+
+**However,** I think when testing the carry-over effect, we should focus on the 'dif_bviral' and 'dif_sviral'. But not sure
+
+
+
+# Carry-over effect
+
+Sum up the AE/Ad at 4 weeks within a period 
+
+I use the total number of AE (takes value in 0, 1, 2, 3, 4) in a period, you can also try to use an indicator
+
+
+```{r}
+period_df <- df %>%
+  group_by(ptid, period, treatment, carry_over) |> 
+  summarise(
+    age = first(age),
+    race = first(race),
+    gender = first(gender),
+    seq = first(seq),
+    seq2 = first(seq2),
+    AE = sum(AE),  # for an indicator variable , you can use AE = ifelse(sum(AE)>=1,1,0)
+    Ad = sum(Ad),
+    base_bviral = mean(base_bviral),
+    base_sviral = mean(base_sviral),
+    dif_bviral = mean(dif_bviral),
+    dif_sviral = mean(dif_sviral),
+    end_bviral = mean(end_bviral),
+    end_sviral = mean(end_sviral),
+    .groups = "drop"
+  )
+period_df 
+```
+
+
+```{r}
+summary(period_df$AE)
+```
+
+
+
+```{r}
+# summation of AE, Ad across all the 3 periods
+seq2_df =
+  period_df |> group_by(ptid) |> 
+  summarise(
+    age = first(age),
+    race = first(race),
+    gender = first(gender),
+    seq = first(seq),
+    seq2 = first(seq2),
+    AE_sum = sum(AE),    # for indicator, you can use AE_sum = ifelse(sum(AE)>=1,1,0)
+    Ad_sum = sum(Ad),
+    bv_sum = sum(dif_bviral),
+    sv_sum = sum(dif_sviral),
+    base_bv_sum = sum(base_bviral),
+    base_sv_sum = sum(base_sviral),
+    .groups = "drop"
+  )
+seq2_df
+
+```
+
+### Bonferroni Test
+
+```{r}
+print("Bonferroni Test for AE")
+model_AE <- glm(AE_sum ~ seq2, data = seq2_df) # family = binomial
+emmeans(model_AE, pairwise ~ seq2, adjust = "bonferroni")
+
+print("Bonferroni Test for Adherence")
+model_Ad <- glm(Ad_sum ~ seq2, data = seq2_df)
+emmeans(model_Ad, pairwise ~ seq2, adjust = "bonferroni")
+
+print("Bonferroni Test for Blood Viral")
+model_bv <- glm(bv_sum ~ seq2, data = seq2_df)
+emmeans(model_bv, pairwise ~ seq2, adjust = "bonferroni")
+
+print("Bonferroni Test for Skin Viral")
+model_sv <- glm(sv_sum ~ seq2, data = seq2_df)
+emmeans(model_sv, pairwise ~ seq2, adjust = "bonferroni")
+```
+
+**Conclusion**: No significant carry-over effect under Bonferroni Test
+
+### AVOVA Test
+
+```{r}
+print("ANOVA Test for AE")
+anova_AE <- aov(AE_sum ~ seq2, data = seq2_df)
+summary(anova_AE)
+
+print("ANOVA Test for Adherence")
+anova_Ad <- aov(Ad_sum ~ seq2, data = seq2_df)
+summary(anova_Ad)
+
+
+print("ANOVA Test for Blood Viral")
+anova_bv <- aov(bv_sum ~ seq2, data = seq2_df)
+summary(anova_bv)
+
+print("ANOVA Test for Skin Viral")
+anova_sv <- aov(sv_sum ~ seq2, data = seq2_df)
+summary(anova_sv)
+
+```
+
+**Conclusion**: No significant carry-over effect under ANOVA test
+
+### Post-hoc Test to See Which Treatments Differ
+
+```{r}
+print("Post-hoc Test for AE")
+model_AE <- glm(AE_sum ~ seq2, data = seq2_df) # family = binomial
+emmeans(model_AE, pairwise ~ seq2, adjust = "tukey")
+
+print("Post-hoc Test for Adherence")
+model_Ad <- glm(Ad_sum ~ seq2, data = seq2_df)
+emmeans(model_Ad, pairwise ~ seq2, adjust = "tukey")
+
+print("Post-hoc Test for Blood Viral")
+model_bv <- glm(bv_sum ~ seq2, data = seq2_df)
+emmeans(model_bv, pairwise ~ seq2, adjust = "tukey")
+
+print("Post-hoc Test for Skin Viral")
+model_sv <- glm(sv_sum ~ seq2, data = seq2_df)
+emmeans(model_sv, pairwise ~ seq2, adjust = "tukey")
+```
+
+**Conclusion**: No significant carry-over effect under Post-hoc Test
+
+
+
+### Comparing Model with and without carry-over variavle
+
+Check whether the coefficient of carryover is significant.
+
+```{r}
+library(glmmTMB)
+
+# Here I use data ` period_df`, where the AE/Ad is the summation of four weeks with a period
+
+#### For AE #######
+
+## with carry_over
+AE_carry = glmmTMB(AE ~ treatment + period + carry_over + base_bviral + base_sviral + (1 | ptid),
+                  data = period_df, family = nbinom2)
+Ad_carry = glmmTMB(Ad ~ treatment + period + carry_over + base_bviral + base_sviral + (1 | ptid),
+                  data = period_df, family = nbinom2)
+bv_carry = lmer(dif_bviral ~ age + gender +race + treatment + period + carry_over +
+                   base_bviral + base_sviral+ (1 | ptid), 
+                     data = period_df)
+
+sv_carry = lmer(dif_sviral ~ age + gender +race + treatment + period + carry_over +
+                   base_bviral + base_sviral+ (1 | ptid), 
+                     data = period_df)
+
+print("Regress on AE with Carryover")
+summary(AE_carry)
+print("Regress on Ad with Carryover")
+summary(Ad_carry)
+print("Regress on Blood Viral with Carryover")
+summary(bv_carry)
+print("Regress on Skin Viral with Carryover")
+summary(sv_carry)
+
+```
+
+
+Carryover is not significant for all the model
+
+
+
+**Therefore,** we conclude there's no carry_over effect
+
+
+# Primary Objective (Focus on AE and Ad)
+
+Fit binomial LMM bor AE
+
+```{r}
+### I use data 'df', which records the AE/Ad value at each week in different periods
+
+##### For AE #####
+### Here I use the indicator of number of AE>=1 as AE
+
+### include week as a continuous variable
+
+AE_week = df |> mutate(week = as.numeric(week),
+                       AE = ifelse(AE>=1,1,0)) |> 
+                glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                              data = _, family = binomial)
+
+### include week as a categorical variable
+AE_week_cat = df |> mutate(AE = ifelse(AE>=1,1,0)) |> 
+  glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                  data = _, family = binomial)
+
+### exclude week
+AE_noweek = df |> mutate(AE = ifelse(AE>=1,1,0)) |> 
+  glmmTMB(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
+                  data = _, family = binomial)
+
+print("Include Week as Continuous")
+summary(AE_week)
+print("Include Week as Categorical")
+summary(AE_week_cat)
+print("Exclude Week")
+summary(AE_noweek)
+
+
+# Week4 is significant, we'd better consider including week as a variable
+
+# However, treat week as continuous variable gives better AIC
+
+```
+
+
+Fit binomial B(7,p) for `7-Ad`
+
+```{r}
+##### For Ad #####
+
+### include week as a continuous variable
+
+# when set family = nbinom here, the model doesn't converge with AIC = NA
+# therefore I choose family = poisson
+
+
+Ad_week = df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, family = binomial, data = _)
+
+
+### include week as a categorical variable
+Ad_week_cat = df |>
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, family = binomial, data = _)
+
+### exclude week
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period+ base_bviral+ base_sviral, family = binomial, data = _)
+
+print("Include Week")
+summary(Ad_week)
+print("Include Week categorical")
+summary(Ad_week_cat)
+print("Exclude Week")
+summary(Ad_noweek)
+
+### According to the AIC, we can see treat week as a continuous variable is better, with the smallest AIC
+
+```
+
+
+Fit model with the assumption that `7-Ad` follows zero-inflation binomial
+
+
+```{r}
+Ad_week = df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral, ziformula = ~1, family = binomial, data = _)
+
+### include week as a categorical variable
+Ad_week_cat = df |>
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week+ base_bviral+ base_sviral,  ziformula = ~1, family = binomial, data = _)
+
+### exclude week
+Ad_noweek = df |> glmmTMB(cbind(7-Ad,Ad) ~  treatment + period+ base_bviral+ base_sviral,  ziformula = ~1, family = binomial, data = _)
+
+print("Include Week")
+summary(Ad_week)
+print("Include Week categorical")
+summary(Ad_week_cat)
+print("Exclude Week")
+summary(Ad_noweek)
+
+```
+
+The binomial model with zero-inflation for `7-Ad` is better than the binomial for `7-Ad` without zero inflation.  So we choose to use the following model with week being treated as a continuous variable.
+
+```{r}
+Ad_week = df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week + base_bviral+ base_sviral, ziformula = ~1, family = binomial, data = _)
+summary(Ad_week)
+```
+
+
+### For AE, Penalized Logistic (Not good for interpretation)
+
+```{r}
+library(glmnet)
+# alpha * L1 + (1-alpha) * L2
+X <- model.matrix( ~ age + gender +race + treatment + period, data = pri_df)[, -1] 
+# Ridge (L2 penalty)
+cv_fit <- cv.glmnet(X, pri_df$AE, family = "binomial", alpha = 0)
+coef(cv_fit, s = "lambda.min")
+
+# Lasso (L1 penalty)
+AE_mod <- glmnet(X, pri_df$AE,  alpha = 1)
+summary(AE_mod)
+
+# alpha=0.5
+AE_mod <- glmnet(X, pri_df$AE, alpha = 0.5)
+summary(AE_mod)
+```
+
+
+
+# Secondary Objective 
+
+### 1) 
+
+
+Interested in the difference in the viral load before and after the period
+
+
+#### Blood Viral
+
+```{r}
+bv_mod = lmer(dif_bviral ~ base_bviral + treatment + period + AE + Ad + (1|ptid), data = period_df, REML = F)
+summary(bv_mod)
+```
+
+Only age is significant when regressing on blood viral
+
+
+#### Skin Viral
+
+```{r}
+sv_mod = lmer(dif_sviral ~ base_sviral + treatment + period + AE + Ad + (1|ptid), data = period_df, REML = F)
+summary(sv_mod)
+```
+
+
+Both AE and Ad have significant impact on bviral load and sviral load
+
+Significant Different between B-A, B-C
+
+
+For B-C
+
+```{r}
+data_new = period_df
+data_new$treatment <- factor(data_new$treatment, levels = c("C","B","A"))
+
+bv_mod = lmer(dif_bviral ~ base_bviral + treatment + period + AE + Ad + (1|ptid), data = data_new, REML = F)
+summary(bv_mod)
+sv_mod = lmer(dif_sviral ~ base_sviral + treatment + period + AE + Ad + (1|ptid), data = data_new, REML = F)
+summary(sv_mod)
+
+
+```
+
+
+B-C is significnt
+
+
+### If spilt week in the same period
+
+```{r}
+sec_df = end_df |> 
+  pivot_longer(AE:Ad,
+               names_to = 'index',
+               values_to = "value") |> 
+  mutate(index = paste0(index,"_week",week)) |> 
+  select(-week) |> 
+  pivot_wider(
+    names_from = index ,
+    values_from = value
+  ) 
+sec_df = merge(sec_df, base_df, by= c("ptid", "period","seq","seq2"))
+```
+
+
+```{r}
+bv_sec_mod = lmer(dif_bviral ~ base_bviral + treatment + period + 
+                    AE_week1+ AE_week2+ AE_week3+ AE_week4 +
+                    Ad_week1+ Ad_week2+ Ad_week3+ Ad_week4 + (1|ptid), data = sec_df, REML = F)
+summary(bv_sec_mod)
+
+sv_sec_mod = lmer(dif_sviral ~ base_sviral + age + gender +race + treatment + period + 
+                    AE_week1+ AE_week2+ AE_week3+ AE_week4 +
+                    Ad_week1+ Ad_week2+ Ad_week3+ Ad_week4 + (1|ptid), data = sec_df, REML = F)
+summary(sv_sec_mod)
+```
+
+
+
+
+### 2) Demographic factor assiciated with Ad
+
+
+```{r}
+### need to split treatment into product and regimen
+dem_df = df |> 
+  mutate(
+    product = 
+      case_when(
+        treatment == "A" ~ 'pill',
+        .default = 'gel'),
+    regimen = 
+       case_when(
+        treatment == "B" ~ '3',
+        .default = '1')
+  )
+```
+
+
+
+#### Initial model
+
+```{r}
+Ad_mod =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~  treatment + period + week, ziformula = ~1, family = binomial, data = _)
+
+summary(Ad_mod)
+```
+
+```{r}
+# adding demographic variables 
+Ad_mod =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~ product + regimen + age + gender + race + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
+summary(Ad_mod)
+```
+
+Only age shows significant association with Adherence
+
+#### Interaction (age with product) and (age with regimen)
+
+```{r}
+bv_mod_ap =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~ age*product + regimen + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
+
+bv_mod_ar =  dem_df |> mutate(week = as.numeric(week)) |> 
+  glmmTMB(cbind(7-Ad,Ad) ~ product + age*regimen + base_bviral + week +period + (1|ptid), data =_, ziformula = ~1, family = binomial)
+
+summary(bv_mod_ap)
+summary(bv_mod_ar)
+
+```
+
+- the association between age and adherence has no significant difference varied by product
+- the association between age and adherence has no significant difference varied by regimen
+
+
+

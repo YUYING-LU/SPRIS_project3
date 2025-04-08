@@ -1,0 +1,529 @@
+---
+title: "data_analysis"
+author: "Lupe Antonio"
+date: "2025-03-27"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(nlme)
+library(glmmTMB)
+```
+
+# Study Design / Objectives:
+
+MATIK is a newly discovered, highly contagious viral skin disease that causes skin rash and infectious in patients, and could even be life threatening. 
+
+A Phase II trial is conducted to evaluate the safety and adherence of all three medications simultaneuously (Pill A, Gel B, Gel C). It is a Phase II, multi-site, randomized, open-label, three-arm crossover study. 
+Note that although data was collected from various places, we assume no site specific differences.
+
+180 MATIK patients were recruited from various health care facilities, including hospitals, primary care clinics, and community-based health services. Patients were randomized into one of six regimen sequences, where each sequence consists of three 4 week periods of study product administration followed by at least a one-week washout period. There duration of this administration period, including the two washout period, was approximately 15 weeks.
+
+
+## Primary:
+
+Compare the safety and adherence profiles of Pill A, Gel B, and Gel C. Basically:
+1. whether medications are safe for patients
+2. whether patients could easily adhere to medication schedules so long term use is feasible
+
+
+## Secondary:
+
+Preliminary assessment and comparison of system and local Pharmacokinetics (PK) of Pill A, Gel B, and Gel C. Additionally:
+1. assess the correlation of PK with adherence measures and occurence of adverse events
+2. identify demographic factors associated with product adherence and whether they differ by product (Pill or Gel) or regimen (3xs per day or 1x per day)
+
+
+
+# Loading Data
+
+```{r}
+baseline <- read_csv("Project 3 - Cross Over/baseline.csv")
+
+endpoints <- read_csv("Project 3 - Cross Over/endpoints.csv")
+```
+
+
+# Exploratory Analysis
+
+```{r}
+mean(baseline$age) #31.93
+
+baseline %>%
+  group_by(race) %>%
+  count() #black (64), others (64), white (52)
+
+baseline %>%
+  group_by(gender) %>%
+  count() #0 (99), 1 (81)
+```
+
+
+important data stuff:
+
+bviral - viral load in blood plasma and affected tissue @ beginning of period
+
+sviral - '' @ end of period
+
+3 periods consist of: 1, washout, 2, washout, 3, follow-up
+
+
+ae_ - # of adverse events for specific medication during specific week
+
+adhere_ - # of days patients took specific medication during specific week
+
+
+
+# Organizing Data
+
+```{r, previous attempt, eval = FALSE}
+data <- baseline %>%
+  pivot_longer(cols = starts_with('period'),
+               names_to = 'period', 
+               values_to = 'treatment')
+
+AE_endpts <- endpoints %>%
+  pivot_longer(cols = starts_with('AE'),
+               names_to = c('trt', 'week'),
+               names_pattern = 'AE_(.*?)_(week\\d+)',
+               values_to = 'AE')
+
+
+Adhere_endpts <- endpoints %>%
+  pivot_longer(cols = starts_with('Adhere'),
+               names_to = c('trt', 'week'),
+               names_pattern = 'Adhere_(.*?)_(week\\d+)',
+               values_to = 'Adhere')
+
+
+endpts <- left_join(AE_endpts, Adhere_endpts,
+                    by = c('ptid', 'period1', 'period2', 'period3', 'trt', 'week'))
+
+
+endpts <- endpts %>%
+  pivot_longer(cols = starts_with('period'),
+               names_to = 'period',
+               values_to = 'treatment') 
+
+
+
+endpts <- endpts %>%
+  select(ptid, period, treatment, week, AE, Adhere)
+
+
+```
+
+```{r, baseline data}
+baseline_long <- baseline %>%
+  mutate(age = as.numeric(age),
+         ptid = as.factor(ptid),
+         seq = paste0(substr(period1, nchar(period1), nchar(period1)),
+                      substr(period2, nchar(period2), nchar(period2)),
+                      substr(period3, nchar(period3), nchar(period3))),
+         seq2 = case_when(period3 == 'Gel C' ~ 0,
+                          period3 == 'Gel B' ~ 1,
+                          period3 == 'Pill A' ~ 2),
+         #blood virals diff for each period
+         b1 = bviral1 - bviral0,
+         b2 = bviral3 - bviral2,
+         b3 = bviral5 - bviral4,
+         follow_b = bviral6 - bviral5,
+         #skin virals diff for each period
+         s1 = sviral1 - sviral0,
+         s2 = sviral3 - sviral2,
+         s3 = sviral5 - sviral4,
+         follow_s = sviral6 - sviral5,
+         #viral @ beginning of period
+         ini_b1 = bviral0,
+         ini_b2 = bviral2,
+         ini_b3 = bviral4,
+         ini_s1 = sviral0,
+         ini_s2 = sviral2,
+         ini_s3 = sviral4,
+         #viral @ end of period
+         end_b1 = bviral1,
+         end_b2 = bviral3,
+         end_b3 = bviral5,
+         end_s1 = sviral1,
+         end_s2 = sviral3,
+         end_s3 = sviral5) %>%
+  select(ptid, seq, seq2, age, race, gender, b1:b3, s1:s3,
+         ini_b1:ini_s3, end_b1:end_s3, follow_b, follow_s) %>%
+  pivot_longer(cols = b1:end_s3,
+               names_to = 'index',
+               values_to = 'viral') %>%
+  mutate(period = substr(index, nchar(index), nchar(index)),
+         #index = ifelse(substr(index, 1, 1) == 'b', 'bviral', 'sviral')
+         index = case_when(
+           substr(index,1,1)=="b" ~ "dif_bviral",
+           substr(index,1,1)=="s" ~ "dif_sviral",
+           substr(index,1,5)=="ini_b" ~ "base_bviral",
+           substr(index,1,5)=="ini_s" ~ "base_sviral",
+           substr(index,1,5)=="end_b" ~ "end_bviral",
+           substr(index,1,5)=="end_s" ~ "end_sviral"
+         ))
+
+
+baseline_wide <- baseline_long %>%
+  pivot_wider(names_from = index,
+              values_from = viral)
+```
+
+
+```{r, endpoints data}
+endpts_long <- endpoints %>%
+  mutate(ptid = as.factor(ptid),
+         seq = paste0(substr(period1, nchar(period1), nchar(period1)),
+                      substr(period2, nchar(period2), nchar(period2)),
+                      substr(period3, nchar(period3), nchar(period3))),
+         seq2 = case_when(period3 == 'Gel C' ~ 0,
+                          period3 == 'Gel B' ~ 1,
+                          period3 == 'Pill A' ~ 2)) %>%
+  pivot_longer(AE_pillA_week1:Adhere_gelC_week4,
+               names_to = 'index',
+               values_to = 'value') %>%
+  select(ptid, seq, seq2, index, value) %>%
+  mutate(week = substr(index, nchar(index), nchar(index)),
+         treatment = str_sub(index, -7, -7),
+         period = str_locate(seq, str_sub(index, -7, -7))[, 'start'],
+         index = str_sub(index, 1, 2))
+
+endpts_wide <- endpts_long %>%
+  pivot_wider(names_from = index,
+              values_from = value) %>%
+  #creating carryover variable
+  mutate(carryover = case_when(
+    period == 1 ~ NA,
+    period == 2 ~ substr(seq, 1, 1),
+    period == 3 ~ substr(seq, 2, 2)))
+```
+
+
+```{r, full data}
+data <- merge(endpts_wide, baseline_wide, by = c('ptid', 'seq', 'seq2', 'period')) %>%
+  mutate(ptid = as.factor(ptid),
+         period = as.factor(period),
+         week = as.factor(week),
+         seq = as.factor(seq),
+         seq2 = as.factor(seq2))
+
+#something to note is that PK's of 'period 4' are not included in this df. 
+```
+
+
+# Exploratory Analysis Pt 2.
+
+```{r, AE}
+# of AEs overtime
+data %>%
+  group_by(week, treatment) %>%
+  summarise(sum_ae = sum(AE)) %>%
+  ggplot(aes(x = week, y = sum_ae, col = treatment)) +
+  geom_point() +
+  geom_line(aes(group = treatment)) +
+  xlab('Week') + 
+  ylab('# of grade 2 or higher adverse events') +
+  theme_classic() +
+  scale_color_brewer(palette="Set1")
+
+#see non-linear trends
+```
+
+```{r, week continuous}
+data %>%
+  mutate(week = as.numeric(week)) %>%
+  group_by(week, treatment) %>%
+  summarise(sum_ae = sum(AE)) %>%
+  ggplot(aes(x = week, y = sum_ae, col = treatment)) +
+  geom_point() +
+  geom_line(aes(group = treatment)) +
+  xlab('Week') + 
+  ylab('# of grade 2 or higher adverse events') +
+  theme_classic() +
+  scale_color_brewer(palette="Set1")
+```
+
+
+```{r, Adherence}
+data %>%
+  group_by(week, treatment) %>%
+  summarise(sum_ad = sum(Ad)) %>%
+  ggplot(aes(x = week, y = sum_ad, col = treatment)) +
+  geom_point() +
+  geom_line(aes(group = treatment)) +
+  xlab('Week') +
+  ylab('# of adherence days') +
+  theme_classic()
+
+#sorta linear trends
+```
+
+```{r, week continuous}
+data %>%
+  mutate(week = as.numeric(week)) %>%
+  group_by(week, treatment) %>%
+  summarise(sum_ad = sum(Ad)) %>%
+  ggplot(aes(x = week, y = sum_ad, col = treatment)) +
+  geom_point() +
+  geom_line(aes(group = treatment)) +
+  xlab('Week') +
+  ylab('# of adherence days') +
+  theme_classic()
+```
+
+
+# Primary Objective:
+
+carryover effect: use seq 2 to fit LMM model then test. 
+
+## AE:
+```{r, AE model 1, eval=FALSE}
+ae_m1 <- glmer(AE ~ age + race + gender + (period | ptid) + treatment + seq2,
+               data = data,
+               family = 'binomial')
+```
+
+```{r, AE data + week continuous mods}
+#creating AE response as binary
+#WEEK CONTINUOUS
+
+ae_binary <- data %>%
+  #week as continuous
+  mutate(week = as.numeric(week),
+         #if 1 or more adverse events in a week, yes
+         AE = ifelse(AE>=1, 1, 0))
+
+#fitting a Generalized/Logistic Mixed Effects model:
+ae_weekM <- glmer(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                  data = ae_binary, family = binomial())
+
+summary(ae_weekM)
+#week is significant (only one too); 0.3544
+#AIC = 447.3
+#model failed to convg. 
+
+
+
+#comparing outcome to glmmTMB mod
+ae_weekM2 <- glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                     data = ae_binary, family = binomial())
+
+summary(ae_weekM2)
+#week is significant (only one too); 0.3546
+#AIC = 447.3
+#THIS MOD seems to be better
+```
+
+```{r, AE data + week categorical mods}
+#AE still binary
+#WEEK CATEGORICAL
+
+ae_binary_cat <- data %>%
+  #week as categorical
+  mutate(AE = ifelse(AE>=1, 1, 0)) 
+
+#fitting Logistic ME model:
+ae_week_catM <- glmer(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                      data = ae_binary_cat, family = binomial())
+
+summary(ae_week_catM)
+#week 4 only significant; 0.8924
+#AIC = 451.7
+#model failed to convg.
+
+
+
+#comparing to glmmTMB mod
+ae_week_catM2 <- glmmTMB(AE ~ treatment + period + week + base_bviral + base_sviral + (1 | ptid),
+                         data = ae_binary_cat, family = binomial())
+
+summary(ae_week_catM2)
+#week 4 only significant; 1.0853
+#AIC = 451.1
+```
+
+```{r, AE mods without week covariate}
+ae_noweekM <- glmer(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
+                    data = ae_binary_cat, family = binomial())
+summary(ae_noweekM)
+#nothing significant
+#AIC = 452
+#model failed to converge
+
+
+
+ae_noweekM2 <- glmmTMB(AE ~ treatment + period + base_bviral + base_sviral + (1 | ptid),
+                       data = ae_binary_cat, family = binomial())
+
+summary(ae_noweekM2)
+#nothing significant
+#AIC = 451.9
+```
+
+```{r, AE mods without base_ covariates + ANOVA}
+#WEEK CONTINUOUS, NO base covariates
+ae_nobaseM <- glmmTMB(AE ~ treatment + period + week + (1 | ptid),
+                      data = ae_binary, family = binomial())
+
+
+#full vs reduced model:
+anova(ae_weekM2, ae_nobaseM)
+#null: reduced model is better
+#alt: extra covariates improve model fit
+#alpha = 0.05, fail to reject null -- reduced model is ok.
+
+
+summary(ae_nobaseM)
+#week is only significant
+#AIC = 446
+```
+
+Overall, model with week as continuous produces best AIC. Also using `glmmTMB`.
+The final model will have week as continuous and not contain the `base_` covariates.
+
+
+
+## Adherence:
+```{r, previous AD mod, eval=FALSE}
+ad_m1 <- lme(Ad ~ age + race + gender + treatment + seq2,
+             random = ~ 1 | ptid,
+             data = data,
+             method = 'ML')
+```
+
+```{r, BLME mod; week continuous}
+#creating AD response Binomial(7, p)
+#since each day is adhere (yes or no), so sum up # of days able to adhere
+#WEEK CONTINUOUS -- bc of linear trends
+
+ad_wcont <- data %>%
+  mutate(week = as.numeric(week))
+
+#fitting a Binomial Linear Mixed Effects model:
+#but fitting for 7 - AD, which means number of days patient didn't adhere
+ad_weekM <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week +
+                      base_bviral + base_sviral + (1 | ptid),
+                    data = ad_wcont, family = binomial())
+
+summary(ad_weekM)
+#treatment, week significant
+#AIC = 4031.2
+```
+
+```{r, BLME mod; week categorical}
+ad_week_catM <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week +
+                          base_bviral + base_sviral + (1 | ptid),
+                        data = data, family = binomial())
+
+summary(ad_week_catM)
+#trt, week significant
+#AIC = 4033.1
+```
+
+```{r, BLME mod; no week}
+ad_noweekM <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + base_bviral +
+                        base_sviral + (1 | ptid),
+                      data = data, family = binomial())
+
+summary(ad_noweekM)
+#trt significant
+#AIC = 4189.3
+```
+
+```{r, BLME without base_ covariates + ANOVA}
+#WEEK CONTINUOUS; no base_
+ad_nobaseM <- glmmTMB(cbind(Ad, 7-Ad) ~ treatment + period + week + (1 | ptid),
+                      data = ad_wcont, family = binomial())
+
+summary(ad_nobaseM)
+#treatment, week significant
+#AIC = 4030.2
+#lower AIC this mod is better
+```
+
+
+```{r, BLME mods w zero-inflation}
+#modeling all above but with zero-inflation:
+ad_weekM2 <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week +
+                      base_bviral + base_sviral + (1 | ptid),
+                     ziformula = ~1,
+                     data = ad_wcont, family = binomial())
+
+summary(ad_weekM2)
+#trt, week signif
+#AIC = 4033.2
+
+
+ad_week_catM2 <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week +
+                          base_bviral + base_sviral + (1 | ptid),
+                         ziformula = ~1,
+                         data = data, family = binomial())
+
+summary(ad_week_catM2)
+#trt, week signif
+#AIC = 4035.1
+
+
+ad_noweekM2 <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + base_bviral +
+                        base_sviral + (1 | ptid),
+                       ziformula = ~1,
+                       data = data, family = binomial())
+
+summary(ad_noweekM2)
+#trt signif
+#AIC = 4191.3 -- should include week
+
+
+ad_nobaseM2 <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week + (1 | ptid),
+                       ziformula = ~ 1, 
+                       data = ad_wcont, family = binomial())
+
+summary(ad_nobaseM2)
+#trt, week signif
+#AIC = 4032.2 -- BEST MOD
+```
+
+```{r, final AD mod}
+ad_nobaseM2 <- glmmTMB(cbind(7-Ad, Ad) ~ treatment + period + week + (1 | ptid),
+                       ziformula = ~ 1, 
+                       data = ad_wcont, family = binomial())
+
+summary(ad_nobaseM2)
+#trt, week signif
+#AIC = 4032.2 -- BEST MOD
+```
+
+Adherence final model has week as continuous, no `base_` covariates, and does not account for zero inflation since when looking through the data many patients did adhere so 7-Ad will produce many zeros -- but actually wasn't significant.
+
+
+
+
+# Secondary Objective
+
+
+## Demographic Factors * product / regimen
+```{r}
+#demographic data
+dem_data = data %>%
+  mutate(product = case_when(
+      treatment == "A" ~ 'pill',
+      .default = 'gel'),
+    regimen = case_when(
+      treatment == "B" ~ '3',
+      .default = '1'))
+
+#age significant only, so age*prod + age*regimen:
+
+
+dem_data2 <- dem_data %>%
+  mutate(week = as.numeric(week))
+
+dem_ad <- glmmTMB(cbind(Ad, 7-Ad) ~ age*product + age*regimen + period + week + (1 | ptid),
+                  data = dem_data2, family = binomial())
+
+summary(dem_ad)
+```
+
